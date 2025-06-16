@@ -78,7 +78,7 @@ class BluetoothPrinterManager extends PrinterManager {
   /// [writeBytes] let you write raw list int data into socket
   @override
   Future<ConnectionResponse> writeBytes(List<int> data,
-      {bool isDisconnect: true}) async {
+      {bool isDisconnect= true}) async {
     try {
       if (!isConnected) {
         await connect();

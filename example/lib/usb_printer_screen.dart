@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:pos_printer_manager/pos_printer_manager.dart';
 import 'package:pos_printer_manager_example/webview_helper.dart';
-import 'package:webcontent_converter/webcontent_converter.dart';
+import 'package:webcontent_converter/webcontent_converter.dart' as webcontent_converter;
+// import 'package:webcontent_converter/webcontent_converter.dart';
 import 'demo.dart';
 import 'service.dart';
 
@@ -71,7 +72,8 @@ class _USBPrinterScreenState extends State<USBPrinterScreen> {
   _startPrinter() async {
     if (_data.isEmpty) {
       final content = Demo.getShortReceiptContent();
-      var bytes = await WebcontentConverter.contentToImage(
+
+      var bytes = await webcontent_converter.WebcontentConverter.contentToImage(
         content: content,
         executablePath: WebViewHelper.executablePath(),
       );
