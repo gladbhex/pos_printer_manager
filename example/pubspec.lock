@@ -138,7 +138,7 @@ packages:
     source: hosted
     version: "0.0.2"
   esc_pos_utils_plus:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: esc_pos_utils_plus
       sha256: "2a22d281cb6f04600ba3ebd607ad8df03a4b2446d814007d22525bab4d50c2ff"
