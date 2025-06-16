@@ -9,7 +9,7 @@ export 'package:pos_printer_manager/services/usb_printer_manager.dart';
 export 'package:pos_printer_manager/enums/bluetooth_printer_type.dart';
 export 'package:pos_printer_manager/enums/connection_response.dart';
 export 'package:pos_printer_manager/enums/connection_type.dart';
-export 'package:esc_pos_utils_plus/esc_pos_utils.dart';
+export 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 
 class PosPrinterManager {
   static EasyLogger logger = EasyLogger(
