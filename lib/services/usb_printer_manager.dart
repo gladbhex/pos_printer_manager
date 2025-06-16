@@ -15,17 +15,12 @@ class USBPrinterManager extends PrinterManager {
   Generator? generator;
 
   /// usb_serial
-  var usbPrinter = FlutterUsbPrinter();
+  final usbPrinter = FlutterUsbPrinter();
 
   /// [win32]
-  Pointer<IntPtr>? phPrinter = calloc<HANDLE>();
-  Pointer<Utf16> pDocName = 'My Document'.toNativeUtf16();
-  Pointer<Utf16> pDataType = 'RAW'.toNativeUtf16();
-  Pointer<Uint32>? dwBytesWritten = calloc<DWORD>();
   Pointer<DOC_INFO_1>? docInfo;
-  late Pointer<Utf16> szPrinterName;
+  Pointer<Uint32>? dwBytesWritten;
   late int hPrinter;
-  int? dwCount;
 
   USBPrinterManager(
     POSPrinter printer,
@@ -43,70 +38,54 @@ class USBPrinterManager extends PrinterManager {
     super.profile = profile;
     super.spaceBetweenRows = spaceBetweenRows;
     super.port = port;
-    generator =
-        Generator(paperSize, profile, spaceBetweenRows: spaceBetweenRows);
+    generator = Generator(paperSize, profile, spaceBetweenRows: spaceBetweenRows);
   }
 
   @override
-  Future<ConnectionResponse> connect(
-      {Duration? timeout = const Duration(seconds: 5)}) async {
+  Future<ConnectionResponse> connect({Duration? timeout = const Duration(seconds: 5)}) async {
     if (Platform.isWindows) {
-    try {
-      final pDocName = 'My Document'.toNativeUtf16();
-      final pDataType = 'RAW'.toNativeUtf16();
-      final printerNamePtr = printer.name!.toNativeUtf16();
-      final printerHandlePtr = calloc<HANDLE>();
-      final docInfo = calloc<DOC_INFO_1>();
+      try {
+        final printerNamePtr = printer.name!.toNativeUtf16();
+        final printerHandlePtr = calloc<HANDLE>();
 
-      docInfo.ref
-        ..pDocName = pDocName
-        ..pOutputFile = nullptr
-        ..pDatatype = pDataType;
+        final result = OpenPrinter(printerNamePtr, printerHandlePtr, nullptr);
+        if (result == FALSE) {
+          final errorCode = GetLastError();
+          PosPrinterManager.logger.error("OpenPrinter failed. Win32 Error: $errorCode");
+          free(printerNamePtr);
+          free(printerHandlePtr);
+          return ConnectionResponse.printerNotConnected;
+        }
 
-      final result = OpenPrinter(printerNamePtr, printerHandlePtr, nullptr);
-      if (result == FALSE) {
-        final errorCode = GetLastError();
-        PosPrinterManager.logger.error("OpenPrinter failed. Win32 Error: $errorCode");
-        free(pDocName);
-        free(pDataType);
+        hPrinter = printerHandlePtr.value;
+        isConnected = true;
+        printer.connected = true;
+
+        dwBytesWritten = calloc<DWORD>();
         free(printerNamePtr);
         free(printerHandlePtr);
-        free(docInfo);
-        return ConnectionResponse.printerNotConnected;
+
+        return ConnectionResponse.success;
+      } catch (e) {
+        PosPrinterManager.logger.error("Connect error: $e");
+        return ConnectionResponse.timeout;
       }
-
-      hPrinter = printerHandlePtr.value;
-      this.isConnected = true;
-      this.printer.connected = true;
-
-      // Save references for later use in writeBytes
-      this.docInfo = docInfo;
-      this.dwBytesWritten = calloc<DWORD>();
-
-      // Don't free pDocName, pDataType, printerNamePtr yet — used in StartDocPrinter
-      return ConnectionResponse.success;
-    } catch (e) {
-      PosPrinterManager.logger.error("Connect error: $e");
-      return ConnectionResponse.timeout;
-    }
-  } else if (Platform.isAndroid) {
+    } else if (Platform.isAndroid) {
       var usbDevice = await usbPrinter.connect(vendorId!, productId!);
       if (usbDevice != null) {
-        print("vendorId $vendorId, productId $productId ");
-        this.isConnected = true;
-        this.printer.connected = true;
-        return Future<ConnectionResponse>.value(ConnectionResponse.success);
+        isConnected = true;
+        printer.connected = true;
+        return ConnectionResponse.success;
       } else {
-        this.isConnected = false;
-        this.printer.connected = false;
-        return Future<ConnectionResponse>.value(ConnectionResponse.timeout);
+        isConnected = false;
+        printer.connected = false;
+        return ConnectionResponse.timeout;
       }
-    } else {
-      return Future<ConnectionResponse>.value(ConnectionResponse.timeout);
     }
+    return ConnectionResponse.timeout;
   }
 
-  /// [discover] let you explore all netWork printer in your network
+  /// [discover] let you explore all USB printers
   static Future<List<USBPrinter>> discover() async {
     var results = await USBService.findUSBPrinter();
     return results;
@@ -114,24 +93,29 @@ class USBPrinterManager extends PrinterManager {
 
   @override
   Future<ConnectionResponse> disconnect({Duration? timeout}) async {
-     if (Platform.isWindows) {
-    try {
-      ClosePrinter(hPrinter);
-      if (dwBytesWritten != null) free(dwBytesWritten!);
-      if (docInfo != null) free(docInfo!);
+    if (Platform.isWindows) {
+      try {
+        if (hPrinter != 0) ClosePrinter(hPrinter);
+        if (dwBytesWritten != null) free(dwBytesWritten!);
+        if (docInfo != null) {
+          free(docInfo!.ref.pDocName);
+          free(docInfo!.ref.pDatatype);
+          free(docInfo!);
+        }
+
+        isConnected = false;
+        printer.connected = false;
+        return ConnectionResponse.success;
+      } catch (e) {
+        PosPrinterManager.logger.error("Disconnect error: $e");
+        return ConnectionResponse.unknown;
+      }
+    } else if (Platform.isAndroid) {
+      await usbPrinter.close();
       isConnected = false;
       printer.connected = false;
-      return ConnectionResponse.success;
-    } catch (e) {
-      PosPrinterManager.logger.error("Disconnect error: $e");
-      return ConnectionResponse.unknown;
-    }
-  } else if (Platform.isAndroid) {
-      await usbPrinter.close();
-      this.isConnected = false;
-      this.printer.connected = false;
       if (timeout != null) {
-        await Future.delayed(timeout, () => null);
+        await Future.delayed(timeout);
       }
       return ConnectionResponse.success;
     }
@@ -139,89 +123,112 @@ class USBPrinterManager extends PrinterManager {
   }
 
   @override
-  Future<ConnectionResponse> writeBytes(List<int> data,
-      {bool isDisconnect = true}) async {
+  Future<ConnectionResponse> writeBytes(List<int> data, {bool isDisconnect = true}) async {
     if (Platform.isWindows) {
       try {
-    if (!isConnected) {
-      final connectResponse = await connect();
-      if (connectResponse != ConnectionResponse.success) return connectResponse;
-    }
+        if (!isConnected) {
+          final connectResponse = await connect();
+          if (connectResponse != ConnectionResponse.success) return connectResponse;
+        }
 
-    final jobId = StartDocPrinter(hPrinter, 1, docInfo!);
-    if (jobId == 0) {
-      final err = GetLastError();
-      PosPrinterManager.logger.error("StartDocPrinter failed. Win32 error: $err");
-      ClosePrinter(hPrinter);
-      return ConnectionResponse.printInProgress;
-    }
+        // Allocate UTF16 strings and DOC_INFO_1
+        final pDocName = 'My Document'.toNativeUtf16();
+        final pDataType = 'RAW'.toNativeUtf16();
+        final docInfo = calloc<DOC_INFO_1>()
+          ..ref.pDocName = pDocName
+          ..ref.pOutputFile = nullptr
+          ..ref.pDatatype = pDataType;
+        this.docInfo = docInfo;
 
-    if (StartPagePrinter(hPrinter) == 0) {
-      final err = GetLastError();
-      PosPrinterManager.logger.error("StartPagePrinter failed. Error: $err");
-      EndDocPrinter(hPrinter);
-      ClosePrinter(hPrinter);
-      return ConnectionResponse.printerNotSelected;
-    }
+        final jobId = StartDocPrinter(hPrinter, 1, docInfo);
+        if (jobId == 0) {
+          final err = GetLastError();
+          PosPrinterManager.logger.error("StartDocPrinter failed. Win32 error: $err");
+          ClosePrinter(hPrinter);
+          free(pDocName);
+          free(pDataType);
+          free(docInfo);
+          return ConnectionResponse.printInProgress;
+        }
 
-    final lpData = data.toUint8();
-    final byteCount = data.length;
-    final result = WritePrinter(hPrinter, lpData, byteCount, dwBytesWritten!);
+        if (StartPagePrinter(hPrinter) == 0) {
+          final err = GetLastError();
+          PosPrinterManager.logger.error("StartPagePrinter failed. Error: $err");
+          EndDocPrinter(hPrinter);
+          ClosePrinter(hPrinter);
+          free(pDocName);
+          free(pDataType);
+          free(docInfo);
+          return ConnectionResponse.printerNotSelected;
+        }
 
-    if (result == 0) {
-      final err = GetLastError();
-      PosPrinterManager.logger.error("WritePrinter failed. Error: $err");
-      EndPagePrinter(hPrinter);
-      EndDocPrinter(hPrinter);
-      ClosePrinter(hPrinter);
-      return ConnectionResponse.printerNotWritable;
-    }
+        final lpData = data.toUint8();
+        final byteCount = data.length;
+        final result = WritePrinter(hPrinter, lpData, byteCount, dwBytesWritten!);
 
-    EndPagePrinter(hPrinter);
-    EndDocPrinter(hPrinter);
+        if (result == 0) {
+          final err = GetLastError();
+          PosPrinterManager.logger.error("WritePrinter failed. Error: $err");
+          EndPagePrinter(hPrinter);
+          EndDocPrinter(hPrinter);
+          ClosePrinter(hPrinter);
+          free(pDocName);
+          free(pDataType);
+          free(docInfo);
+          return ConnectionResponse.printerNotWritable;
+        }
 
-    if (dwBytesWritten!.value != byteCount) {
-      PosPrinterManager.logger.error("Only wrote ${dwBytesWritten!.value} of $byteCount bytes.");
-    }
+        EndPagePrinter(hPrinter);
+        EndDocPrinter(hPrinter);
 
-    if (isDisconnect) {
-      ClosePrinter(hPrinter);
-    }
+        if (dwBytesWritten!.value != byteCount) {
+          PosPrinterManager.logger.error("Only wrote ${dwBytesWritten!.value} of $byteCount bytes.");
+        }
 
-    return ConnectionResponse.success;
-  } catch (e) {
-    PosPrinterManager.logger.error("Unexpected error: $e");
-    return ConnectionResponse.unknown;
-  }
+        free(pDocName);
+        free(pDataType);
+        // Freeing docInfo happens in disconnect()
+
+        if (isDisconnect) {
+          await disconnect();
+        }
+
+        return ConnectionResponse.success;
+      } catch (e) {
+        PosPrinterManager.logger.error("Unexpected error: $e");
+        return ConnectionResponse.unknown;
+      }
     } else if (Platform.isAndroid) {
-      if (!this.isConnected) {
+      if (!isConnected) {
         await connect();
         PosPrinterManager.logger.info("connect()");
       }
 
-      PosPrinterManager.logger("start write");
+      PosPrinterManager.logger.info("start write");
       var bytes = Uint8List.fromList(data);
       int max = 16384;
+      var chunks = bytes.chunkBy(max);
 
-      /// maxChunk limit on android
-      var datas = bytes.chunkBy(max);
-      await Future.forEach(
-          datas, (dynamic data) async => await usbPrinter.write(data));
-      PosPrinterManager.logger("end write bytes.length${bytes.length}");
+      await Future.forEach(chunks, (dynamic data) async {
+        await usbPrinter.write(data);
+      });
+
+      PosPrinterManager.logger.info("end write, bytes.length=${bytes.length}");
 
       if (isDisconnect) {
         try {
           await usbPrinter.close();
-          this.isConnected = false;
-          this.printer.connected = false;
+          isConnected = false;
+          printer.connected = false;
         } catch (e) {
-          PosPrinterManager.logger.error("Error : $e");
+          PosPrinterManager.logger.error("Error: $e");
           return ConnectionResponse.unknown;
         }
       }
+
       return ConnectionResponse.success;
-    } else {
-      return ConnectionResponse.unsupport;
     }
+
+    return ConnectionResponse.unsupport;
   }
 }
