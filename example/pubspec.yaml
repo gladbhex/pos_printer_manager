@@ -12,8 +12,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  webcontent_converter: ^0.0.7 
-
+  webcontent_converter: ^0.0.8
   pos_printer_manager:
     # When depending on this package from a real application you should use:
     #   pos_printer_manager: ^x.y.z
@@ -21,6 +20,7 @@ dependencies:
     # The example app is bundled with the plugin so we use a path dependency on
     # the parent directory to use the current plugin's version.
     path: ../
+  esc_pos_utils_plus: ^2.0.4
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
